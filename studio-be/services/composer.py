@@ -26,9 +26,12 @@ async def render_video_ad(completed_scenes: list, storyboard: dict) -> str:
     primary_color = storyboard.get("primary_color", "#FFFFFF")
     
     for scene in completed_scenes:
-        # 1. Format the ElevenLabs base64 audio into a valid Data URI for Creatomate
+        # 1. Handle audio source (either URL or base64)
         audio_base64 = scene["voice_data"].get("audio_base64", "")
-        audio_source = f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else ""
+        if audio_base64.startswith("http"):
+            audio_source = audio_base64
+        else:
+            audio_source = f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else ""
         
         # 2. Build the scene composition
         # Creatomate automatically scales the duration of this composition based on the audio length!
@@ -40,13 +43,13 @@ async def render_video_ad(completed_scenes: list, storyboard: dict) -> str:
                     "type": "image",
                     "source": scene["image_url"],
                     "animations": [{"type": "pan", "easing": "linear", "scope": "element"}],
-                    "time": "start",
+                    "time": 0,
                     "duration": "100%"
                 },
                 {
                     "type": "audio",
                     "source": audio_source,
-                    "time": "start"
+                    "time": 0
                 },
                 {
                     "type": "text",
@@ -55,8 +58,8 @@ async def render_video_ad(completed_scenes: list, storyboard: dict) -> str:
                     "font_weight": "800",
                     "y": "80%", # Lower third text
                     "animations": [
-                        {"type": "text-slide-up", "duration": "0.5 s", "time": "start"},
-                        {"type": "fade-out", "duration": "0.3 s", "time": "end"}
+                        {"type": "text-slide", "duration": "0.5 s", "time": "start"},
+                        {"type": "fade", "duration": "0.3 s", "time": "end"}
                     ]
                 }
             ]
@@ -68,8 +71,8 @@ async def render_video_ad(completed_scenes: list, storyboard: dict) -> str:
         "type": "composition",
         "track": 1,
         "duration": "3 s",
+        "fill_color": primary_color,
         "elements": [
-            {"type": "solid", "fill_color": primary_color},
             {"type": "text", "text": storyboard.get("call_to_action", "Learn More"), "fill_color": "#000000", "font_weight": "900"}
         ]
     })
@@ -86,12 +89,31 @@ async def render_video_ad(completed_scenes: list, storyboard: dict) -> str:
     }
     
     try:
-        # Creatomate usually returns the response very fast with the render URL
+        # Creatomate returns immediately with status 'planned'. We need to poll until it's 'succeeded'
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-            return data[0].get("url", "")
+            render_id = data[0].get("id")
+            initial_url = data[0].get("url", "")
+            
+            # Poll for render completion
+            import asyncio
+            poll_url = f"https://api.creatomate.com/v1/renders/{render_id}"
+            for _ in range(30): # Wait up to 60 seconds
+                await asyncio.sleep(2)
+                poll_res = await client.get(poll_url, headers=headers)
+                poll_data = poll_res.json()
+                status = poll_data.get("status")
+                
+                if status == "succeeded":
+                    return poll_data.get("url", initial_url)
+                elif status == "failed":
+                    logger.error(f"Creatomate render failed internally: {poll_data.get('error_message')}")
+                    return "https://creatomate.com/files/assets/fallback.mp4"
+            
+            logger.warning("Creatomate render polling timed out. Returning URL anyway.")
+            return initial_url
     except Exception as e:
         logger.error(f"Creatomate render failed: {e}")
         return "https://creatomate.com/files/assets/fallback.mp4"

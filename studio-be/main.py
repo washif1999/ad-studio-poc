@@ -62,8 +62,8 @@ async def generate_ad_pipeline(job_id: str, url: str):
         # Save the final video URL back to the Turso DB state
         db.execute("UPDATE ads SET video_url = ? WHERE id = ?", (final_video_url, job_id))
         
-        # For now, mark as complete
-        update_progress(100, "SUCCESS")
+        # For now, mark as complete and send the URL back to the frontend
+        update_progress(100, f"SUCCESS|{final_video_url}")
         
     except Exception as e:
         update_progress(0, f"FAILED: {str(e)}")
