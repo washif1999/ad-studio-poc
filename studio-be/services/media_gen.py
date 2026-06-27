@@ -199,10 +199,14 @@ async def generate_image_cloudflare(prompt: str) -> str:
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(CLOUDFLARE_WORKER_URL, json=payload, headers=headers)
         response.raise_for_status()
-        image_url = await upload_to_tmpfiles(response.content, "cf_image.jpg")
-        if not image_url:
-            raise ValueError("Failed to upload Cloudflare image to tmpfiles")
-        return image_url
+        
+        # Save image to local cache instead of tmpfiles.org
+        img_filename = f"cf_{uuid.uuid4().hex}.jpg"
+        img_filepath = os.path.join(AUDIO_CACHE_DIR, img_filename)
+        with open(img_filepath, "wb") as f:
+            f.write(response.content)
+            
+        return f"{BACKEND_BASE_URL}/api/audio/{img_filename}"
 
 
 async def generate_image(prompt: str, hero_image_hint: str = "") -> str:

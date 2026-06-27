@@ -70,6 +70,7 @@ function VariantCard({
   const [videoUrl, setVideoUrl] = useState(variant.video_url);
   const [formatLoading, setFormatLoading] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [showAdvancedEditor, setShowAdvancedEditor] = useState(false);
   const [scenes, setScenes] = useState<SceneData[]>(variant.scenes);
   const [rerendering, setRerendering] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -163,13 +164,9 @@ function VariantCard({
       </div>
 
       {/* Video */}
-      <div className={`video-container ${ratioClass(activeFormat)}`} style={{ minHeight: "400px" }}>
-        {variant.video_source ? (
-          <VideoEditor 
-            source={variant.video_source} 
-            publicToken={process.env.NEXT_PUBLIC_CREATOMATE_PUBLIC_TOKEN || ""} 
-            backendUrl={BACKEND}
-          />
+      <div className={`video-container ${ratioClass(activeFormat)}`} style={{ minHeight: showAdvancedEditor ? "700px" : "400px" }}>
+        {showAdvancedEditor && videoUrl ? (
+          <VideoEditor videoUrl={videoUrl} />
         ) : videoUrl && videoUrl.startsWith("http") ? (
           <video
             ref={videoRef}
@@ -203,8 +200,11 @@ function VariantCard({
           CTA: <span>{variant.call_to_action}</span>
         </div>
         <div className="card-actions">
+          <button className="btn-edit" style={{ background: '#5e6ad2', color: 'white', border: 'none' }} onClick={() => setShowAdvancedEditor((v) => !v)}>
+            {showAdvancedEditor ? "Close Advanced Editor" : "Open Advanced Editor"}
+          </button>
           <button className="btn-edit" onClick={() => setShowEditor((v) => !v)}>
-            {showEditor ? "Close Editor" : "Edit Scenes"}
+            {showEditor ? "Close Scene Editor" : "Edit Scenes"}
           </button>
           {videoUrl && videoUrl.startsWith("http") && (
             <a

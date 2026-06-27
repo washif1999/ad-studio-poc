@@ -217,16 +217,69 @@ async def create_ad(req: AdGenerationRequest, background_tasks: BackgroundTasks)
 
 
 @app.get("/api/audio/{filename}")
-async def serve_audio(filename: str):
+async def serve_audio(filename: str, request: Request):
     """
-    Serves generated MP3 audio files from the local audio_cache directory.
-    Creatomate fetches these URLs when rendering video.
+    Serves generated audio (MP3) and video (MP4) files from the local audio_cache directory.
+    Supports HTTP Range requests (206 Partial Content) — required for WebGL-based video
+    players like Shotstack Canvas to correctly detect and render the video track.
+    Without Range support the canvas falls back to an audio-only rendering context.
     """
     filepath = AUDIO_CACHE_DIR / filename
     if not filepath.exists() or not filepath.is_file():
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(str(filepath), media_type="audio/mpeg")
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = "video/mp4" if filename.endswith(".mp4") else "audio/mpeg"
+    file_size = filepath.stat().st_size
+
+    range_header = request.headers.get("range")
+    if range_header:
+        # Parse "bytes=start-end"
+        try:
+            range_val = range_header.replace("bytes=", "")
+            parts = range_val.split("-")
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if parts[1] else file_size - 1
+        except (ValueError, IndexError):
+            start, end = 0, file_size - 1
+
+        end = min(end, file_size - 1)
+        chunk_size = end - start + 1
+
+        def ranged_file_iterator():
+            with open(filepath, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    data = f.read(min(65536, remaining))
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            ranged_file_iterator(),
+            status_code=206,
+            media_type=media_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length",
+            },
+        )
+
+    # No Range header — serve entire file with Accept-Ranges advertised
+    return FileResponse(
+        str(filepath),
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length",
+        },
+    )
 
 
 @app.get("/api/ads/stream/{job_id}")
