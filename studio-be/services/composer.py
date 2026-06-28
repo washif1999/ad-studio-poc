@@ -18,22 +18,113 @@ FORMAT_DIMENSIONS = {
 AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "audio_cache")
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
+# Raster image magic bytes: JPEG, PNG, GIF, WebP, BMP
+_RASTER_MAGIC = [
+    b"\xff\xd8\xff",       # JPEG
+    b"\x89PNG\r\n",        # PNG
+    b"GIF8",               # GIF
+    b"RIFF",               # WebP (RIFF....WEBP)
+    b"BM",                 # BMP
+]
+
+def _is_raster_image(data: bytes) -> bool:
+    """Returns True if the byte content looks like a supported raster image."""
+    for magic in _RASTER_MAGIC:
+        if data[:len(magic)] == magic:
+            return True
+    return False
+
+def _make_fallback_image(width: int = 1920, height: int = 1080, color: str = "#1a1a2e") -> str:
+    """Creates a solid-color JPEG fallback and returns its local path."""
+    from PIL import Image as _Image
+    img = _Image.new("RGB", (width, height), color)
+    path = os.path.join(AUDIO_CACHE_DIR, f"fallback_{uuid.uuid4().hex}.jpg")
+    img.save(path, quality=85)
+    logger.info(f"Created solid-color fallback image at {path}")
+    return path
+
 def _download_image_to_local(image_url: str) -> str:
-    """If the image_url is a local path (starts with BACKEND), return the file path. Otherwise, download it."""
+    """If the image_url is a local path (starts with BACKEND), return the file path.
+    Otherwise, download it using httpx with browser-like headers to avoid 403s from CDNs.
+    Non-raster responses (SVG, HTML, etc.) are replaced with a solid-color fallback."""
     if image_url.startswith(BACKEND_BASE_URL):
         filename = image_url.split("/")[-1]
-        return os.path.join(AUDIO_CACHE_DIR, filename)
-    
-    # Download remote image
+        local_path = os.path.join(AUDIO_CACHE_DIR, filename)
+        if os.path.exists(local_path):
+            # Validate the cached file is actually a raster image
+            with open(local_path, "rb") as f:
+                header = f.read(12)
+            if not _is_raster_image(header):
+                logger.warning(f"Cached file {filename} is not a raster image (likely SVG/HTML placeholder). Using fallback.")
+                return _make_fallback_image()
+            return local_path
+        # File referenced but not on disk — fall through to download
+
+    if not image_url:
+        logger.warning("Empty image_url, using fallback.")
+        return _make_fallback_image()
+
+    # Download remote image (hero images from CDNs, Pollinations, uguu.se, etc.)
     local_path = os.path.join(AUDIO_CACHE_DIR, f"dl_{uuid.uuid4().hex}.jpg")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
     try:
-        import requests
-        r = requests.get(image_url, timeout=10)
-        with open(local_path, "wb") as f:
-            f.write(r.content)
+        with httpx.Client(timeout=20.0, follow_redirects=True, headers=headers) as client:
+            r = client.get(image_url)
+            if r.status_code != 200:
+                logger.warning(f"Image download returned HTTP {r.status_code} for: {image_url}")
+                return _make_fallback_image()
+            content = r.content
+            if not content:
+                logger.warning(f"Empty response body for image: {image_url}")
+                return _make_fallback_image()
+            # Validate content is a real raster image before saving as .jpg
+            if not _is_raster_image(content):
+                content_preview = content[:200].decode("utf-8", errors="replace")
+                logger.warning(
+                    f"Downloaded content from {image_url} is not a raster image "
+                    f"(got: {content_preview!r}...). Using solid-color fallback."
+                )
+                return _make_fallback_image()
+            with open(local_path, "wb") as f:
+                f.write(content)
+        logger.info(f"Downloaded image ({len(content)//1024}KB) from {image_url}")
         return local_path
     except Exception as e:
         logger.error(f"Failed to download image {image_url}: {e}")
+        return _make_fallback_image()
+
+def _download_file_to_local(file_url: str, ext: str = "") -> str:
+    """Downloads any file (audio, video, etc.) to the local cache without content validation.
+    Returns the local path, or empty string on failure."""
+    if not file_url:
+        return ""
+    if file_url.startswith(BACKEND_BASE_URL):
+        filename = file_url.split("/")[-1]
+        local_path = os.path.join(AUDIO_CACHE_DIR, filename)
+        if os.path.exists(local_path):
+            return local_path
+        # File referenced but not on disk — fall through to download
+    suffix = ext or (f".{file_url.rsplit('.', 1)[-1]}" if '.' in file_url.rsplit('/', 1)[-1] else ".bin")
+    local_path = os.path.join(AUDIO_CACHE_DIR, f"dl_{uuid.uuid4().hex}{suffix}")
+    try:
+        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            r = client.get(file_url)
+            if r.status_code != 200:
+                logger.warning(f"File download returned HTTP {r.status_code} for: {file_url}")
+                return ""
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+        logger.info(f"Downloaded file ({len(r.content)//1024}KB) from {file_url}")
+        return local_path
+    except Exception as e:
+        logger.error(f"Failed to download file {file_url}: {e}")
         return ""
 
 def _create_scene_image_with_text(image_path: str, text: str, width: int, height: int, is_cta: bool = False, primary_color: str = "#5e6ad2") -> str:
@@ -41,11 +132,14 @@ def _create_scene_image_with_text(image_path: str, text: str, width: int, height
     try:
         if is_cta:
             img = Image.new("RGB", (width, height), primary_color)
+        elif not image_path or not os.path.exists(image_path):
+            logger.warning(f"image_path missing or not found ({image_path!r}), using solid-color fallback.")
+            img = Image.new("RGB", (width, height), "#1a1a2e")
         else:
             img = Image.open(image_path).convert("RGBA")
             img_ratio = img.width / img.height
             target_ratio = width / height
-            
+
             if img_ratio > target_ratio:
                 new_width = int(target_ratio * img.height)
                 offset = (img.width - new_width) // 2
@@ -54,7 +148,7 @@ def _create_scene_image_with_text(image_path: str, text: str, width: int, height
                 new_height = int(img.width / target_ratio)
                 offset = (img.height - new_height) // 2
                 img = img.crop((0, offset, img.width, offset + new_height))
-                
+
             img = img.resize((width, height), Image.Resampling.LANCZOS)
             
         if text:
@@ -134,13 +228,15 @@ async def render_video_ad(
         duration = scene.get("duration_seconds", 5.0)
         
         if audio_url:
-            local_audio = _download_image_to_local(audio_url)
+            # Use the plain file downloader — audio must NOT go through raster validation
+            local_audio = _download_file_to_local(audio_url, ext=".mp3")
             if local_audio and os.path.exists(local_audio):
                 try:
                     audio_clip = AudioFileClip(local_audio)
                     duration = max(audio_clip.duration, 3.0)
                 except Exception as e:
                     logger.error(f"AudioFileClip error: {e}")
+                    audio_clip = None  # Ensure we don't reference a half-constructed clip
                     
         # Moviepy requires duration to be explicitly set for ImageClips
         img_clip = ImageClip(comp_img).with_duration(duration)

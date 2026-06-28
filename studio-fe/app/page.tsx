@@ -164,7 +164,7 @@ function VariantCard({
       </div>
 
       {/* Video */}
-      <div className={`video-container ${ratioClass(activeFormat)}`} style={{ minHeight: showAdvancedEditor ? "700px" : "400px" }}>
+      <div className={`video-container ${showAdvancedEditor ? "editor-mode" : ratioClass(activeFormat)}`}>
         {showAdvancedEditor && videoUrl ? (
           <VideoEditor videoUrl={videoUrl} />
         ) : videoUrl && videoUrl.startsWith("http") ? (

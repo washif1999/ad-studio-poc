@@ -2,7 +2,6 @@ import os
 import uuid
 import asyncio
 import logging
-import urllib.parse
 import httpx
 import edge_tts
 
@@ -153,41 +152,52 @@ async def generate_image_hf(prompt: str) -> str:
         return f"{BACKEND_BASE_URL}/api/audio/{img_filename}"
 
 
-async def generate_image_pollinations(prompt: str) -> str:
+async def generate_image_gemini(prompt: str) -> str:
     """
-    Downloads image from Pollinations.ai then re-uploads it to uguu.se.
-    Returns a stable public URL that Creatomate's cloud servers can download.
+    Generate image via Google Gemini Imagen 3 (free tier).
+    Uses the existing GEMINI_API_KEY, saves result locally and returns a backend URL.
     """
-    encoded_prompt = urllib.parse.quote(prompt)
-    poll_url = (
-        f"https://image.pollinations.ai/p/{encoded_prompt}"
-        f"?width=1280&height=720&nologo=true&enhance=true"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            # Step 1: Download from Pollinations (we control rate, no 429)
-            r = await client.get(poll_url)
-            if r.status_code != 200 or not r.content:
-                logger.warning(f"Pollinations returned {r.status_code}")
-                return ""
-            img_bytes = r.content
-            logger.info(f"Pollinations downloaded: {len(img_bytes)//1024}KB")
+    import base64
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    if not gemini_api_key:
+        logger.warning("GEMINI_API_KEY not set, skipping Gemini Imagen.")
+        return ""
 
-            # Step 2: Re-upload to uguu.se (free, public, no auth required)
-            r2 = await client.post(
-                "https://uguu.se/upload.php",
-                files={"files[]": ("scene.jpg", img_bytes, "image/jpeg")},
-            )
-            if r2.status_code == 200:
-                data = r2.json()
-                if data.get("success") and data.get("files"):
-                    url = data["files"][0].get("url", "")
-                    if url:
-                        logger.info(f"Image uploaded to uguu.se: {url}")
-                        return url
-            logger.warning(f"uguu.se upload failed: {r2.status_code} {r2.text[:100]}")
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"imagen-3.0-generate-002:predict?key={gemini_api_key}"
+    )
+    payload = {
+        "instances": [{"prompt": prompt}],
+        "parameters": {
+            "sampleCount": 1,
+            "aspectRatio": "16:9",
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.warning(f"Gemini Imagen returned {response.status_code}: {response.text[:200]}")
+                return ""
+            data = response.json()
+            predictions = data.get("predictions", [])
+            if not predictions:
+                logger.warning("Gemini Imagen returned no predictions.")
+                return ""
+            b64_data = predictions[0].get("bytesBase64Encoded", "")
+            if not b64_data:
+                logger.warning("Gemini Imagen prediction had no image bytes.")
+                return ""
+            img_bytes = base64.b64decode(b64_data)
+            img_filename = f"gemini_{uuid.uuid4().hex}.jpg"
+            img_filepath = os.path.join(AUDIO_CACHE_DIR, img_filename)
+            with open(img_filepath, "wb") as f:
+                f.write(img_bytes)
+            logger.info(f"Gemini Imagen generated image: {len(img_bytes)//1024}KB")
+            return f"{BACKEND_BASE_URL}/api/audio/{img_filename}"
     except Exception as e:
-        logger.error(f"Pollinations/uguu pipeline failed: {e}")
+        logger.error(f"Gemini Imagen generation failed: {e}")
     return ""
 
 
@@ -211,42 +221,45 @@ async def generate_image_cloudflare(prompt: str) -> str:
 
 async def generate_image(prompt: str, hero_image_hint: str = "") -> str:
     """
-    Generates a public image URL for Creatomate to download.
-    Pipeline: Pollinations.ai → uguu.se → Cloudflare Worker → HF → Fal.ai → hero hint → placeholder
+    Generates a locally-cached image and returns a backend-served URL.
+    Pipeline: hero hint → Cloudflare Worker → Gemini Imagen 3 → HF → Fal.ai → placeholder
     """
     if hero_image_hint:
         logger.info("Using scraped hero image instead of AI generation.")
         return hero_image_hint
 
-    img = await generate_image_pollinations(prompt)
-    if img:
-        return img
-
+    # 1. Your custom Cloudflare Worker (free, fastest)
     try:
-        return await generate_image_cloudflare(prompt)
+        img = await generate_image_cloudflare(prompt)
+        if img:
+            return img
     except Exception as e:
         logger.error(f"Cloudflare Worker image generation failed: {e}")
 
+    # 2. Google Gemini Imagen 3 (free tier, high quality)
+    img = await generate_image_gemini(prompt)
+    if img:
+        return img
+
+    # 3. Hugging Face Serverless Inference (free tier)
     if HF_API_KEY:
         try:
-            return await generate_image_hf(prompt)
+            img = await generate_image_hf(prompt)
+            if img:
+                return img
         except Exception as e:
             logger.error(f"Hugging Face image generation failed: {e}")
 
+    # 4. Fal.ai (requires key but free tier available)
     if FAL_API_KEY:
         try:
-            return await generate_image_fal(prompt)
+            img = await generate_image_fal(prompt)
+            if img:
+                return img
         except Exception as e:
             logger.error(f"Fal.ai image generation failed: {e}")
 
-    try:
-        import urllib.parse
-        encoded_prompt = urllib.parse.quote(prompt)
-        return f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true"
-    except Exception as e:
-        logger.error(f"Pollinations generation failed: {e}")
-
-    logger.warning("No image API available. Using placeholder.")
+    logger.warning("All image generation sources exhausted. Using placeholder.")
     return "https://placehold.co/1920x1080/1a1a2e/6366f1?text=Ad+Scene"
 
 
@@ -255,9 +268,11 @@ async def process_scene(scene: dict, brand_kit: dict | None = None) -> dict:
     brand_kit = brand_kit or {}
     hero_images = brand_kit.get("hero_images", [])
 
-    hero_hint = hero_images[0] if hero_images and scene.get("scene_number") == 1 else ""
-    if not hero_hint and hero_images:
-        hero_hint = hero_images[min(scene.get("scene_number", 1) - 1, len(hero_images) - 1)]
+    # Only use scraped hero image for the FIRST scene.
+    # For subsequent scenes, always use AI-generated images so the video
+    # has variety and actually reflects the site's visual language via prompts.
+    scene_number = scene.get("scene_number", 1)
+    hero_hint = hero_images[0] if hero_images and scene_number == 1 else ""
 
     voice_coro = generate_voice(scene["voiceover_script"])
     image_coro = generate_image(scene["visual_image_prompt"], hero_hint)
