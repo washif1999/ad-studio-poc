@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BACKEND_BASE = 'http://127.0.0.1:8000/api/audio';
+const BACKEND_BASE = `${process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'}/api/audio`;
 
 /**
  * Proxy route: /api/video_stream/[...path]
@@ -45,7 +45,7 @@ export async function GET(
     );
   }
 
-  if (!backendResponse.ok && backendResponse.status !== 206) {
+  if (!backendResponse.ok && backendResponse.status !== 206 && backendResponse.status !== 304) {
     return NextResponse.json(
       { error: `Backend returned ${backendResponse.status}` },
       { status: backendResponse.status },
@@ -62,6 +62,13 @@ export async function GET(
   // Ensure CORS headers are present so PIXI can read the response
   responseHeaders.set('Access-Control-Allow-Origin', '*');
   responseHeaders.set('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+
+  if (backendResponse.status === 304) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: responseHeaders,
+    });
+  }
 
   return new NextResponse(backendResponse.body, {
     status: backendResponse.status,

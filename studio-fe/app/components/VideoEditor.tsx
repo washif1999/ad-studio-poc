@@ -310,6 +310,8 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
   useEffect(() => {
     if (!timelineRef.current || !videoUrl) return;
 
+    let active = true;
+
     destroyAll();
     setStatus('loading');
     setSelectedClip(null);
@@ -335,6 +337,12 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
 
         const edit   = new Edit(template as any);
         const canvas = new Canvas(edit);
+
+        if (!active) {
+          canvas.dispose();
+          return;
+        }
+
         editRef.current   = edit;
         canvasRef.current = canvas;
 
@@ -372,9 +380,25 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
 
         // Wait one animation frame so React has painted ve-canvas-wrap
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!active) {
+          ui.dispose();
+          canvas.dispose();
+          return;
+        }
 
         await canvas.load();
+        if (!active) {
+          ui.dispose();
+          canvas.dispose();
+          return;
+        }
+
         await edit.load();
+        if (!active) {
+          ui.dispose();
+          canvas.dispose();
+          return;
+        }
 
         canvas.resize();
         canvas.zoomToFit();
@@ -384,25 +408,45 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
         const timeline = new Timeline(edit, timelineRef.current!, { resizable: true });
         timelineInstRef.current = timeline;
         await timeline.load();
+        if (!active) {
+          timeline.dispose();
+          ui.dispose();
+          canvas.dispose();
+          return;
+        }
 
         const controls = new Controls(edit);
         controlsRef.current = controls;
         await controls.load();
+        if (!active) {
+          controls.dispose();
+          timeline.dispose();
+          ui.dispose();
+          canvas.dispose();
+          return;
+        }
 
         // ── Events ──────────────────────────────────────────────────────
         edit.events.on('clip:selected', (data: AnyClip) => {
+          if (!active) return;
           const raw = edit.getClip(data.trackIndex, data.clipIndex) as AnyClip;
           if (raw) setSelectedClip({ trackIndex: data.trackIndex, clipIndex: data.clipIndex, raw });
         });
-        edit.events.on('selection:cleared', () => setSelectedClip(null));
+        edit.events.on('selection:cleared', () => {
+          if (!active) return;
+          setSelectedClip(null);
+        });
         edit.events.on('clip:updated', (data: AnyClip) => {
+          if (!active) return;
           const raw = edit.getClip(data.trackIndex, data.clipIndex) as AnyClip;
           if (raw) setSelectedClip(prev => prev ? { ...prev, raw } : prev);
         });
         edit.events.on('duration:changed', () => {
+          if (!active) return;
           setTotalDuration(edit.totalDuration ?? 0);
         });
         edit.events.on('playback:play',  () => {
+          if (!active) return;
           const tick = setInterval(() => {
             setPlaybackTime(editRef.current?.playbackTime ?? 0);
           }, 200);
@@ -413,9 +457,15 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
         });
 
         setStatus('ready');
-        requestAnimationFrame(() => { canvas.resize(); canvas.zoomToFit(); });
+        requestAnimationFrame(() => {
+          if (active) {
+            canvas.resize();
+            canvas.zoomToFit();
+          }
+        });
 
       } catch (err: unknown) {
+        if (!active) return;
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[VideoEditor]', err);
         setErrorMsg(msg);
@@ -424,7 +474,10 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
     };
 
     load();
-    return () => destroyAll();
+    return () => {
+      active = false;
+      destroyAll();
+    };
   }, [videoUrl, destroyAll]);
 
   // ── Toolbar actions ────────────────────────────────────────────────────────
