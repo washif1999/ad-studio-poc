@@ -15,7 +15,12 @@ FORMAT_DIMENSIONS = {
     "1:1": (1080, 1080),
 }
 
-AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "audio_cache")
+if os.getenv("VERCEL"):
+    AUDIO_CACHE_DIR = "/tmp/audio_cache"
+else:
+    AUDIO_CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "audio_cache"))
+os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
+
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
 # Raster image magic bytes: JPEG, PNG, GIF, WebP, BMP

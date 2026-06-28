@@ -12,7 +12,10 @@ from database import get_db_client
 from services.scraper import scrape_url
 from services.llm import generate_storyboard
 
-AUDIO_CACHE_DIR = Path(__file__).parent / "audio_cache"
+if os.getenv("VERCEL"):
+    AUDIO_CACHE_DIR = Path("/tmp/audio_cache")
+else:
+    AUDIO_CACHE_DIR = Path(__file__).parent / "audio_cache"
 AUDIO_CACHE_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="AdStudio API", version="0.2.0")
@@ -20,7 +23,7 @@ app = FastAPI(title="AdStudio API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -28,8 +31,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    from database import init_db
-    init_db()
+    try:
+        from database import init_db
+        init_db()
+    except Exception as e:
+        import traceback
+        print("DATABASE INIT ERROR ON STARTUP:")
+        traceback.print_exc()
 
 # In-memory SSE state per job_id
 # shape: { job_id: { "progress": int, "status": str, "variants": [...] } }

@@ -13,7 +13,10 @@ CLOUDFLARE_WORKER_API_KEY = os.getenv("CLOUDFLARE_WORKER_API_KEY")
 CLOUDFLARE_WORKER_URL = "https://free-image-generation-ap.ashwindatasense.workers.dev/"
 
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
-AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "audio_cache")
+if os.getenv("VERCEL"):
+    AUDIO_CACHE_DIR = "/tmp/audio_cache"
+else:
+    AUDIO_CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "audio_cache"))
 os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
 
 

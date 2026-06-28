@@ -5,6 +5,7 @@ and Turso (libSQL) when TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are set.
 import os
 import sqlite3
 import logging
+import shutil
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,7 +13,21 @@ logger = logging.getLogger(__name__)
 
 TURSO_URL = os.getenv("TURSO_DATABASE_URL", "")
 TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
-LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "adstudio.db")
+
+# If running on Vercel, use /tmp as it is the only writeable directory
+if os.getenv("VERCEL"):
+    LOCAL_DB_PATH = "/tmp/adstudio.db"
+    # Copy the bundled database to /tmp if it doesn't exist yet
+    original_db = os.path.join(os.path.dirname(__file__), "adstudio.db")
+    if os.path.exists(original_db) and not os.path.exists(LOCAL_DB_PATH):
+        try:
+            shutil.copy2(original_db, LOCAL_DB_PATH)
+            logger.info("Copied initial database to /tmp/adstudio.db")
+        except Exception as e:
+            logger.error(f"Failed to copy database: {e}")
+else:
+    LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "adstudio.db")
+
 
 def _turso_available() -> bool:
     if not (TURSO_URL and TURSO_TOKEN):
@@ -20,10 +35,10 @@ def _turso_available() -> bool:
     try:
         import libsql_client  # noqa: F401, PLC0415
         return True
-    except ImportError:
+    except Exception as e:
         logger.warning(
-            "TURSO_* is set but libsql-client is not installed. "
-            "Falling back to local SQLite. Install with: pip install libsql-client"
+            f"Failed to import libsql-client: {e}. "
+            "Falling back to local SQLite."
         )
         return False
 
