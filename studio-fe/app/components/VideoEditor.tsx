@@ -419,7 +419,7 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
         controlsRef.current = controls;
         await controls.load();
         if (!active) {
-          controls.dispose();
+          (controls as any).dispose?.();
           timeline.dispose();
           ui.dispose();
           canvas.dispose();
