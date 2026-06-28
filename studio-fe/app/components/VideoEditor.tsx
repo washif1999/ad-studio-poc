@@ -321,8 +321,17 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
     // Strip query params before extracting filename (e.g. ?t=... suffixes)
     const cleanUrl  = videoUrl.split('?')[0];
     const filename  = cleanUrl.split('/').pop() ?? '';
+
+    // Dynamically pass the backend origin to the proxy so it doesn't rely on env vars
+    let backendOrigin = '';
+    try {
+      backendOrigin = new URL(videoUrl).origin;
+    } catch (e) {
+      // fallback
+    }
+
     // Use our custom Next.js API route which properly forwards Range headers.
-    const proxiedUrl = `${window.location.origin}/api/video_stream/${filename}`;
+    const proxiedUrl = `${window.location.origin}/api/video_stream/${filename}${backendOrigin ? `?backend=${encodeURIComponent(backendOrigin)}` : ''}`;
 
     const load = async () => {
       try {

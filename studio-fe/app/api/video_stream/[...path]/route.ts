@@ -19,7 +19,16 @@ export async function GET(
 ) {
   const resolvedParams = await params;
   const filename = resolvedParams.path.join('/');
-  const backendUrl = `${BACKEND_BASE}/${filename}`;
+
+  // Extract backend origin from query parameter if provided
+  const { searchParams } = new URL(request.url);
+  const backendParam = searchParams.get('backend');
+
+  const backendBase = backendParam
+    ? `${backendParam}/api/audio`
+    : BACKEND_BASE;
+
+  const backendUrl = `${backendBase}/${filename}`;
 
   // Forward all incoming headers to the backend (Range is critical for video)
   const forwardHeaders: Record<string, string> = {};
