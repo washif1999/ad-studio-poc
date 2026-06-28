@@ -331,9 +331,23 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
     }
 
     // Use our custom Next.js API route which properly forwards Range headers.
-    // If the backend is running locally (localhost/127.0.0.1), we load it directly in the browser
-    // since the Vercel cloud server cannot access the user's localhost.
-    const isLocal = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1');
+    // If the backend is running locally (localhost, 127.0.0.1, or local Wi-Fi private IP ranges like 192.168.x.x), 
+    // we load it directly in the browser since the Vercel cloud server cannot access private/local network addresses.
+    const isLocalUrl = (urlStr: string): boolean => {
+      try {
+        const hostname = new URL(urlStr).hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') return true;
+        if (hostname.startsWith('192.168.') || hostname.startsWith('10.')) return true;
+        if (hostname.endsWith('.local')) return true;
+        const ipParts = hostname.split('.').map(Number);
+        if (ipParts.length === 4 && ipParts[0] === 172 && ipParts[1] >= 16 && ipParts[1] <= 31) return true;
+        return false;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    const isLocal = isLocalUrl(cleanUrl);
     const proxiedUrl = isLocal
       ? cleanUrl
       : `${window.location.origin}/api/video_stream/${filename}${backendOrigin ? `?backend=${encodeURIComponent(backendOrigin)}` : ''}`;
