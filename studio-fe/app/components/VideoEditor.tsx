@@ -32,7 +32,7 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 // Position aligning helper
-const posAlign: Record<string, { horizontal: string; vertical: string }> = {
+const posAlign: Record<string, { horizontal: "center" | "left" | "right"; vertical: "top" | "middle" | "bottom" }> = {
   top:    { horizontal: 'center', vertical: 'top'    },
   center: { horizontal: 'center', vertical: 'middle' },
   bottom: { horizontal: 'center', vertical: 'bottom' },
@@ -296,7 +296,7 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
   // ── Cleanup ────────────────────────────────────────────────────────────────
   const destroyAll = useCallback(() => {
     try { timelineInstRef.current?.dispose?.(); } catch { /* ignore */ }
-    try { controlsRef.current?.dispose?.();     } catch { /* ignore */ }
+    try { (controlsRef.current as any)?.dispose?.(); } catch { /* ignore */ }
     try { uiRef.current?.dispose?.();           } catch { /* ignore */ }
     try { canvasRef.current?.dispose?.();       } catch { /* ignore */ }
     timelineInstRef.current = null;
@@ -333,7 +333,7 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
           output: { format: 'mp4', resolution: 'hd' },
         };
 
-        const edit   = new Edit(template);
+        const edit   = new Edit(template as any);
         const canvas = new Canvas(edit);
         editRef.current   = edit;
         canvasRef.current = canvas;
@@ -477,7 +477,6 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
           align: posAlign[d.pos] || posAlign.center,
           background: {
             color: 'rgba(0,0,0,0.55)',
-            padding: { top: 10, bottom: 10, left: 24, right: 24 },
             borderRadius: 8,
           },
         },
@@ -501,7 +500,6 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
           align: { horizontal: 'center', vertical: 'bottom' },
           background: {
             color: 'rgba(0,0,0,0.78)',
-            padding: { top: 8, bottom: 8, left: 18, right: 18 },
             borderRadius: 4,
           },
         },
@@ -583,7 +581,7 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
     if (!editRef.current || !selectedClip) return;
     const align = posAlign[newPos];
     const asset = { ...selectedClip.raw.asset, align };
-    const updates: Partial<Clip> = {
+    const updates: Record<string, any> = {
       asset,
       height: newPos === 'center' ? 320 : 200,
     };
@@ -598,7 +596,7 @@ export default function VideoEditor({ videoUrl }: { videoUrl: string }) {
     setSelectedClip(prev => prev ? { ...prev, raw: { ...prev.raw, asset } } : prev);
   };
 
-  const handleFitChange = async (newFit: string) => {
+  const handleFitChange = async (newFit: any) => {
     if (!editRef.current || !selectedClip) return;
     await editRef.current.updateClip(selectedClip.trackIndex, selectedClip.clipIndex, { fit: newFit });
     setSelectedClip(prev => prev ? { ...prev, raw: { ...prev.raw, fit: newFit } } : prev);
