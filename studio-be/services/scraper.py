@@ -157,6 +157,25 @@ async def scrape_url(url: str) -> dict:
         logo_url = _extract_logo(soup, base_url)
         hero_images = _extract_hero_images(soup, base_url)
 
+        # Fallback to Jina Reader if Vercel IP was blocked by WAF/Cloudflare and returned empty
+        if not hero_images:
+            try:
+                jina_url = f"https://r.jina.ai/{url}"
+                async with httpx.AsyncClient(timeout=15.0) as jclient:
+                    j_res = await jclient.get(jina_url)
+                    if j_res.status_code == 200:
+                        import re
+                        found_imgs = re.findall(r'!\[.*?\]\((.*?)\)', j_res.text)
+                        for img_url in found_imgs:
+                            if not img_url.startswith("data:"):
+                                full = urljoin(base_url, img_url)
+                                if full not in hero_images:
+                                    hero_images.append(full)
+                            if len(hero_images) >= 3:
+                                break
+            except Exception as e:
+                logger.warning(f"Jina fallback failed: {e}")
+
         return {
             "text": text,
             "brand_kit": {
